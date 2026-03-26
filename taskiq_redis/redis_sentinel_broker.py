@@ -67,7 +67,7 @@ class PubSubSentinelBroker(BaseSentinelBroker):
 
         :param message: message to send.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with self._acquire_master_conn() as redis_conn:
             await redis_conn.publish(queue_name, message.message)
 
@@ -104,7 +104,7 @@ class ListQueueSentinelBroker(BaseSentinelBroker):
 
         :param message: message to append.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with self._acquire_master_conn() as redis_conn:
             await redis_conn.lpush(queue_name, message.message)  # type: ignore
 
@@ -225,7 +225,7 @@ class RedisStreamSentinelBroker(BaseSentinelBroker):
 
         :param message: message to append.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with self._acquire_master_conn() as redis_conn:
             await redis_conn.xadd(
                 queue_name,

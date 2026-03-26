@@ -76,7 +76,7 @@ class PubSubBroker(BaseRedisBroker):
 
         :param message: message to send.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             await redis_conn.publish(queue_name, message.message)
 
@@ -113,7 +113,7 @@ class ListQueueBroker(BaseRedisBroker):
 
         :param message: message to append.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             await redis_conn.lpush(queue_name, message.message)  # type: ignore
 
@@ -254,7 +254,7 @@ class RedisStreamBroker(BaseRedisBroker):
 
         :param message: message to append.
         """
-        queue_name = message.labels.get("queue_name") or self.queue_name
+        queue_name = message.queue
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             await redis_conn.xadd(
                 queue_name,
