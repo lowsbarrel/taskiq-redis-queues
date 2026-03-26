@@ -165,7 +165,7 @@ class RedisStreamBroker(BaseRedisBroker):
         unacknowledged_batch_size: int = 100,
         unacknowledged_lock_timeout: float | None = None,
         xread_count: int | None = 100,
-        additional_streams: dict[str, str | int] | None = None,
+        additional_streams: dict[str, str] | None = None,
         **connection_kwargs: Any,
     ) -> None:
         """
