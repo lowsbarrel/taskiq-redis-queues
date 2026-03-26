@@ -191,15 +191,40 @@ scheduler = TaskiqScheduler(broker, [array_source])
 During startup the scheduler will try to migrate schedules from an old source to a new one. Please be sure to specify different prefixe just to avoid any kind of collision between these two.
 
 
-## Dynamic queue names
+## Multi-queue support
 
+All Redis brokers support multi-queue routing. Tasks can be sent to specific queues, and workers can be configured to listen on one or more queues simultaneously.
 
-Brokers supports dynamic queue names, allowing you to specify different queues when kicking tasks. This is useful for routing tasks to specific queues based on runtime conditions, such as priority levels, tenant isolation, or environment-specific processing.
+### Sending tasks to a specific queue
 
-Simply pass the desired queue name as message's label when kicking a task to override the broker's default queue configuration.
+Set a default queue on a task via the decorator, or override it per invocation using `with_queue`:
 
 ```python
-@broker.task(queue_name="low_priority")
+@broker.task(queue="low_priority")
 async def low_priority_task() -> None:
     print("I don't mind waiting a little longer")
+
+# Override at call time
+await low_priority_task.with_queue("high_priority").kiq()
 ```
+
+The broker reads the queue from `message.queue` and publishes/pushes to the corresponding Redis key (channel, list, or stream depending on broker type).
+
+### Workers listening on multiple queues
+
+Use the `--queues` / `-q` CLI argument to have a worker process tasks from specific queues:
+
+```bash
+# Listen on multiple queues
+taskiq worker myapp:broker --queues high_priority,default,bulk
+
+# Listen on a single queue
+taskiq worker myapp:broker -q emails
+```
+
+If `--queues` is not specified, the worker listens on the broker's default `queue_name`.
+
+**How it works per broker type:**
+- **PubSubBroker**: Subscribes to multiple Redis channels (one per queue).
+- **ListQueueBroker**: Uses `brpop` across multiple Redis lists.
+- **RedisStreamBroker**: Reads from multiple streams. This is combined with any `additional_streams` configured on the broker.
