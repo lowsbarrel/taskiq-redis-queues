@@ -91,7 +91,8 @@ class PubSubBroker(BaseRedisBroker):
         """
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             redis_pubsub_channel = redis_conn.pubsub()
-            await redis_pubsub_channel.subscribe(self.queue_name)
+            channels = self.listen_queues or [self.queue_name]
+            await redis_pubsub_channel.subscribe(*channels)
             async for message in redis_pubsub_channel.listen():
                 if not message:
                     continue
@@ -126,10 +127,11 @@ class ListQueueBroker(BaseRedisBroker):
         :yields: broker messages.
         """
         redis_brpop_data_position = 1
+        queues = self.listen_queues or [self.queue_name]
         while True:
             try:
                 async with Redis(connection_pool=self.connection_pool) as redis_conn:
-                    yield (await redis_conn.brpop(self.queue_name))[  # type: ignore
+                    yield (await redis_conn.brpop(queues))[  # type: ignore
                         redis_brpop_data_position
                     ]
             except ConnectionError as exc:
@@ -215,13 +217,18 @@ class RedisStreamBroker(BaseRedisBroker):
         self.unacknowledged_lock_timeout = unacknowledged_lock_timeout
         self.count = xread_count
 
+    def _all_streams(self) -> set[str]:
+        """Return the full set of stream names this broker operates on."""
+        base = self.listen_queues or [self.queue_name]
+        return {*base, *self.additional_streams.keys()}
+
     async def _declare_consumer_group(self) -> None:
         """
         Declare consumber group.
 
         Required for proper work of the broker.
         """
-        streams = {self.queue_name, *self.additional_streams.keys()}
+        streams = self._all_streams()
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             for stream_name in streams:
                 try:
@@ -272,13 +279,15 @@ class RedisStreamBroker(BaseRedisBroker):
         async with Redis(connection_pool=self.connection_pool) as redis_conn:
             while True:
                 logger.debug("Starting fetching new messages")
+                base_queues = self.listen_queues or [self.queue_name]
+                streams_to_read: dict[str | bytes | memoryview, int | str | bytes | memoryview] = {
+                    q: ">" for q in base_queues
+                }
+                streams_to_read.update(self.additional_streams)
                 fetched = await redis_conn.xreadgroup(
                     self.consumer_group_name,
                     self.consumer_name,
-                    {
-                        self.queue_name: ">",
-                        **self.additional_streams,  # type: ignore[dict-item]
-                    },
+                    streams_to_read,
                     block=self.block,
                     noack=False,
                     count=self.count,
@@ -291,7 +300,7 @@ class RedisStreamBroker(BaseRedisBroker):
                             ack=self._ack_generator(id=msg_id, queue_name=stream),
                         )
                 logger.debug("Starting fetching unacknowledged messages")
-                for stream in [self.queue_name, *self.additional_streams.keys()]:
+                for stream in self._all_streams():
                     lock = redis_conn.lock(
                         f"autoclaim:{self.consumer_group_name}:{stream}",
                         timeout=self.unacknowledged_lock_timeout,

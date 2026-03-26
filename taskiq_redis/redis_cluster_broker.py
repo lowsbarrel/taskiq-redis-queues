@@ -69,8 +69,9 @@ class ListQueueClusterBroker(BaseRedisClusterBroker):
         :yields: broker messages.
         """
         redis_brpop_data_position = 1
+        queues = self.listen_queues or [self.queue_name]
         while True:
-            value = await self.redis.brpop([self.queue_name])  # type: ignore
+            value = await self.redis.brpop(queues)  # type: ignore
             yield value[redis_brpop_data_position]
 
 
@@ -137,8 +138,13 @@ class RedisStreamClusterBroker(BaseRedisClusterBroker):
         self.approximate = approximate
         self.additional_streams = additional_streams or {}
 
+    def _all_streams(self) -> set[str]:
+        """Return the full set of stream names this broker operates on."""
+        base = self.listen_queues or [self.queue_name]
+        return {*base, *self.additional_streams.keys()}
+
     async def _declare_consumer_group(self) -> None:
-        streams = {self.queue_name, *self.additional_streams.keys()}
+        streams = self._all_streams()
         async with self.redis as redis_conn:
             for stream_name in streams:
                 try:
@@ -185,13 +191,15 @@ class RedisStreamClusterBroker(BaseRedisClusterBroker):
     async def listen(self) -> AsyncGenerator[AckableMessage, None]:
         """Listen to the stream for new messages."""
         while True:
+            base_queues = self.listen_queues or [self.queue_name]
+            streams_to_read: dict[str | bytes | memoryview, int | str | bytes | memoryview] = {
+                q: ">" for q in base_queues
+            }
+            streams_to_read.update(self.additional_streams)
             fetched = await self.redis.xreadgroup(
                 self.consumer_group_name,
                 self.consumer_name,
-                {
-                    self.queue_name: ">",
-                    **self.additional_streams,  # type: ignore
-                },
+                streams_to_read,
                 block=self.block,
                 noack=False,
             )

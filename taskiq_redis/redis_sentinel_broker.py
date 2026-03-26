@@ -82,7 +82,8 @@ class PubSubSentinelBroker(BaseSentinelBroker):
         """
         async with self._acquire_master_conn() as redis_conn:
             redis_pubsub_channel = redis_conn.pubsub()
-            await redis_pubsub_channel.subscribe(self.queue_name)
+            channels = self.listen_queues or [self.queue_name]
+            await redis_pubsub_channel.subscribe(*channels)
             async for message in redis_pubsub_channel.listen():
                 if not message:
                     continue
@@ -117,9 +118,10 @@ class ListQueueSentinelBroker(BaseSentinelBroker):
         :yields: broker messages.
         """
         redis_brpop_data_position = 1
+        queues = self.listen_queues or [self.queue_name]
         async with self._acquire_master_conn() as redis_conn:
             while True:
-                yield (await redis_conn.brpop(self.queue_name))[  # type: ignore
+                yield (await redis_conn.brpop(queues))[  # type: ignore
                     redis_brpop_data_position
                 ]
 
@@ -191,8 +193,13 @@ class RedisStreamSentinelBroker(BaseSentinelBroker):
         self.approximate = approximate
         self.additional_streams = additional_streams or {}
 
+    def _all_streams(self) -> set[str]:
+        """Return the full set of stream names this broker operates on."""
+        base = self.listen_queues or [self.queue_name]
+        return {*base, *self.additional_streams.keys()}
+
     async def _declare_consumer_group(self) -> None:
-        streams = {self.queue_name, *self.additional_streams.keys()}
+        streams = self._all_streams()
         async with self._acquire_master_conn() as redis_conn:
             for stream_name in streams:
                 try:
@@ -242,13 +249,15 @@ class RedisStreamSentinelBroker(BaseSentinelBroker):
         """Listen to the stream for new messages."""
         async with self._acquire_master_conn() as redis_conn:
             while True:
+                base_queues = self.listen_queues or [self.queue_name]
+                streams_to_read: dict[str | bytes | memoryview, int | str | bytes | memoryview] = {
+                    q: ">" for q in base_queues
+                }
+                streams_to_read.update(self.additional_streams)
                 fetched = await redis_conn.xreadgroup(
                     self.consumer_group_name,
                     self.consumer_name,
-                    {
-                        self.queue_name: ">",
-                        **self.additional_streams,  # type: ignore
-                    },
+                    streams_to_read,
                     block=self.block,
                     noack=False,
                 )
